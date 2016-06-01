@@ -1,17 +1,26 @@
-format	COFF
+format COFF
 
 ; © Wolk-1024
-; v29.02.2016
+; v01.06.2016
 
-public	x64Call           as '_x64Call'
-public	GetModuleHandle64 as '_GetModuleHandle64'
-public	GetProcAddress64  as '_GetProcAddress64'
-public	memcpy64          as '_memcpy64'
-public	GetTeb64          as '_GetTeb64'
-public	GetPeb64          as '_GetPeb64'
-public	GetNtdll64        as '_GetNtdll64'
+public x64Call           as '_x64Call'
+public GetModuleHandle64 as '_GetModuleHandle64'
+public GetProcAddress64  as '_GetProcAddress64'
+public memcpy64          as '_memcpy64'
+public memcmp64          as '_memcmp64'
+public GetTeb64          as '_GetTeb64'
+public GetPeb64          as '_GetPeb64'
+public GetNtdll64        as '_GetNtdll64'
+public IsWoW64           as '_IsWoW64'
 
 include '..\include\win32ax.inc'
+
+macro %IsWoW64
+{        
+    xor    eax, eax             
+    dec    eax 
+    neg    eax  
+}
 
 macro retfq val
 {
@@ -29,7 +38,7 @@ macro %jmp33 Address
    if ~ Address eq
       jmp    far 0x33:Address
    else
-      push   0x33
+      push   0x33  ; Heavens Gate
       call   $ + 5
       add    dword [esp], 5
       retf
@@ -53,11 +62,12 @@ macro %jmp23 Address
    use32
 }
 
-WIN64_SEGMENT	    = 0x33
-WOW64_SEGMENT	    = 0x23
-MAX_STACK_PARAM     = 0x100
-IMAGE_NT_SIGNATURE  = 0x00004550
-IMAGE_DOS_SIGNATURE = 0x5A4D
+WIN32_SEGMENT = 0x1B
+WOW64_SEGMENT = 0x23
+WIN64_SEGMENT = 0x33
+IMAGE_NT_SIGNATURE = 0x00004550   ; PE
+IMAGE_DOS_SIGNATURE = 0x5A4D	  ; MZ
+IMAGE_FILE_MACHINE_AMD64 = 0x8664
 
 ;--------------------------------------------------------;
 ;                        x64Call                         ;
@@ -70,7 +80,7 @@ IMAGE_DOS_SIGNATURE = 0x5A4D
 
 proc x64Call c uses ebx esi edi, pfnProc64:qword, nArgs:dword, ...:dword
 
-     %jmp33                            ; Прыжок в 64-битный сегмент.
+     %jmp33                            ; Прыгаем в 64-битный сегмент.
      mov    ebx, esp                   ;
      mov    rax, qword [pfnProc64]     ; RAX = Вызываемая функция.
      mov    ecx, dword [nArgs]	       ; ECX = Количество передаваемых аргументов.
@@ -97,16 +107,17 @@ proc x64Call c uses ebx esi edi, pfnProc64:qword, nArgs:dword, ...:dword
      shr    rdx, 32                    ;
      %jmp23                            ;
      ret                               ;
+
 endp
 
 ;--------------------------------------------------------;
-;                  GetModuleHandle64                     ;
+;                   GetModuleHandle64                    ;
 ;--------------------------------------------------------;
-; [in]	lpProcName - Имя искомой библиотеки.             ;
+; [in]	ModuleName - Имя искомой библиотеки.             ;
 ; [out] EDX:EAX    - Адрес загрузки или 0.               ;
 ;--------------------------------------------------------;
 
-proc GetModuleHandle64 c uses esi edi, lpProcName:dword
+proc GetModuleHandle64 c uses esi edi, ModuleName:dword
 
      %jmp33                            ;
      mov    rax, 0x60                  ;
@@ -115,11 +126,14 @@ proc GetModuleHandle64 c uses esi edi, lpProcName:dword
      mov    rax, qword [rax+0x10]      ; RAX = PEB64->Ldr.InLoadOrderModuleList.Flink (Первый модуль)
      mov    rdx, rax                   ;
      cld                               ;
-.NextModule:
+     mov    r8d, [ModuleName]	       ;
+     test   r8d, r8d                   ;
+     je     .Found                     ;
+.NextModule:                           ;
      movzx  rcx, word  [rax+0x58]      ; RCX = LdrDataTableEntry.BaseDllName.Length
      mov    rsi, qword [rax+0x60]      ; RSI = LdrDataTableEntry.BaseDllName.Buffer
-     mov    edi, [lpProcName]	       ;
-     shr    rcx, 1                     ;
+     mov    edi, r8d                   ;
+     shr    ecx, 1                     ;
      repe   cmpsw                      ;
      je     .Found                     ;
      mov    rax, qword [rax]	       ; RAX = InLoadOrderModuleList[n].Flink (Следующий модуль)
@@ -127,94 +141,104 @@ proc GetModuleHandle64 c uses esi edi, lpProcName:dword
      jne    .NextModule                ;
      xor    eax, eax                   ;
      jmp    .Exit                      ;
-.Found:
+.Found:                                ;
      mov    rax, qword [rax+0x30]      ; RAX = LdrDataTableEntry.DllBase
-.Exit:
+.Exit:                                 ;
      mov    rdx, rax                   ;
      shr    rdx, 32                    ;
      %jmp23                            ;
      ret                               ;
+
 endp
 
 ;--------------------------------------------------------;
 ;                   GetProcAddress64                     ;
 ;--------------------------------------------------------;
-; [in]	hModule    - Адрес загрузки библиотеки. 	 ;
-; [in]	lpProcName - Имя искомой функции или её ординал. ;
-; [out] EDX:EAX    - Вернёт 0 или адрес.		 ;
+; [in]	ModuleHandle  - Адрес загрузки библиотеки.       ;
+; [in]	ProcedureName - Имя или ординал искомой функции. ;
+; [out] EDX:EAX       - Вернёт 0 или адрес.              ;
 ;--------------------------------------------------------;
 
-proc GetProcAddress64 c uses ebx esi edi, hModule:qword, lpProcName:dword
+proc GetProcAddress64 c uses esi edi, ModuleHandle:qword, ProcedureName:dword
 
      %jmp33                            ;
-     mov    rbx, qword [hModule]       ;
-     mov    edx, dword [lpProcName]    ;
-     cmp    word [rbx], 'MZ'	       ;
+     mov    rdx, qword [ModuleHandle]  ;
+     test   rdx, rdx                   ;
+     jle    .Error                     ;
+     cmp    word [rdx], 'MZ'	       ; IMAGE_DOS_SIGNATURE
      jne    .Error                     ;
-     mov    r11d, dword [rbx+0x3C]     ; ImageDosHeader->e_lfanew
-     add    r11, rbx                   ;
-     cmp    dword [r11], 'PE'	       ;
+     mov    eax, dword [rdx+0x3C]      ; ImageDosHeader->e_lfanew
+     add    rax, rdx                   ;
+     cmp    dword [rax], 'PE'	       ; IMAGE_NT_SIGNATURE
      jne    .Error                     ;
-     mov    r11d, dword [r11+0x88]     ; ImageNtHeaders64->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress
-     test   r11d, r11d                 ;
-     je     .Error                     ;
-     add    r11, rbx                   ;
-     mov    r10d, dword [r11+0x20]     ; ImageExportDirectory->AddressOfNames (RVA)
-     add    r10, rbx                   ;
-     mov    ecx,  dword [r11+0x18]     ; ImageExportDirectory->NumberOfNames
+     cmp    word [rax+0x04], 0x8664    ; IMAGE_FILE_MACHINE_AMD64
+     mov    ecx, 0x88                  ;
+     je     .Lib64                     ;
+     sub    ecx, 0x10                  ;
+.Lib64:                                ;
+     mov    r8d, dword [rax+rcx]       ; ImageNtHeaders64->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress
+     test   r8d, r8d                   ;
+     jle    .Error                     ;
+     add    r8, rdx                    ;
+     mov    r9d, dword [r8+0x20]       ; ImageExportDirectory->AddressOfNames (RVA)
+     add    r9, rdx                    ;
+     mov    ecx, dword [r8+0x18]       ; ImageExportDirectory->NumberOfNames
+     mov    r10, rdx                   ;
+     mov    edx, dword [ProcedureName] ;
      test   edx, 0xffff0000            ; if (((DWORD)lpProcName & 0xffff0000) == 0)
      je     .Ordinal                   ;
      cld                               ;
-.NextProc:
+.NextProc:                             ;
      dec    ecx                        ;
      jle    .Error                     ;
-     mov    esi, dword [r10+rcx*4]     ; char* Name = (char*)(AddressOfNames[IndexName] + hModule);
-     add    rsi, rbx                   ;
-     mov    edi, edx                   ;
-.Char:
+     mov    esi, dword [r9+rcx*4]      ; char* Name = (char*)(AddressOfNames[IndexName] + hModule);
+     add    rsi, r10                   ;
+     mov    edi, edx                   ; edi = ProcedureName
+.Char:                                 ;
      lodsb                             ;
      shl    eax, 8                     ;
      xchg   rdi, rsi                   ;
      lodsb                             ;
-     test   ax, ax                     ;
+     test   ax, ax                     ; if ((Str1[i] == 0) && (Str2[i] == 0))
      je     .Found                     ;
      cmp    al, ah                     ;
      je     .Char                      ;
      jmp    .NextProc                  ;
-.Ordinal:
-     mov    ecx, dword [r11+0x10]      ; ImageExportDirectory->Base
-     mov    eax, dword [r11+0x14]      ; ImageExportDirectory->NumberOfFunctions
+.Ordinal:                              ;
+     mov    ecx, dword [r8+0x10]       ; ImageExportDirectory->Base
+     mov    eax, dword [r8+0x14]       ; ImageExportDirectory->NumberOfFunctions
      add    eax, ecx                   ;
-     cmp    edx, eax                   ;
+     cmp    edx, eax                   ; if (Ordinal >= ExportDirectory->Base + ExportDirectory->NumberOfFunctions)
      jae    .Error                     ;
-     cmp    edx, ecx                   ;
+     cmp    edx, ecx                   ; if (Ordinal < ExportDirectory->Base)
      jl     .Error                     ;
-     xchg   ecx, edx                   ; ecx = edx; edx = ecx
+     xchg   ecx, edx                   ;
      sub    ecx, edx                   ; FunctionIndex = Ordinal - ExportDirectory->Base;
      jmp    @f                         ;
-.Found:
-     mov    eax, dword [r11+0x24]      ; ImageExportDirectory->AddressOfNameOrdinals (RVA)
-     add    rax, rbx                   ;
+.Found:                                ;
+     mov    eax, dword [r8+0x24]       ; ImageExportDirectory->AddressOfNameOrdinals (RVA)
+     add    rax, r10                   ;
      movzx  ecx, word  [rax+rcx*2]     ; FunctionIndex = AddressOfNameOrdinals[IndexName]
-  @@:
-     mov    eax, dword [r11+0x1C]      ; ImageExportDirectory->AddressOfFunctions (RVA)
-     add    rax, rbx                   ;
+  @@:                                  ;
+     mov    eax, dword [r8+0x1C]       ; ImageExportDirectory->AddressOfFunctions (RVA)
+     add    rax, r10                   ;
      mov    eax, dword [rax+rcx*4]     ; AddressOfFunctions[FunctionIndex]
-     add    rax, rbx                   ;
+     add    rax, r10                   ;
      jmp    .Exit                      ;
-.Error:
+.Error:                                ;
      xor    eax, eax                   ;
-.Exit:
+.Exit:                                 ;
      mov    rdx, rax                   ;
      shr    rdx, 32                    ;
      %jmp23                            ;
      ret                               ;
+
 endp
 
 ;--------------------------------------------------------;
-;                       memcpy64                         ;
+;                        memcpy64                        ;
 ;--------------------------------------------------------;
-; [in]	Dest - Адрес буфера назначения. 	             ;
+; [in]	Dest - Адрес буфера назначения.                  ;
 ; [in]	Src  - Адрес источника.                          ;
 ; [in]	Size - Длина данных.                             ;
 ; [out] Ничего.                                          ;
@@ -227,33 +251,104 @@ proc memcpy64 c uses esi edi, Dest:qword, Src:qword, Size:dword
      mov    rdi, [Dest] 	           ;
      mov    ecx, [Size] 	           ;
      mov    edx, ecx		           ;
-     cld                               ;
-     shr    ecx, 3                     ;
-     repe   movsq                      ;
+     test   ecx, ecx		           ;
+     jle    .Exit		               ;
+     cld			                   ;
+     shr    ecx, 3		               ;
+     repe   movsq		               ;
      mov    ecx, edx		           ;
-     and    ecx, 7                     ;
-     repe   movsb                      ;
-     %jmp23                            ;
-     retf                              ;
-endp
-
-proc GetTeb64
-
-     mov    edx, 0x30		           ; TEB64->NtTib.Self
-     mov    eax, dword [gs:edx]        ;
-     mov    edx, dword [gs:edx+4]      ;
+     and    ecx, 7		               ;
+     repe   movsb		               ;
+.Exit:				                   ;
+     %jmp23			                   ;
      ret			                   ;
 
 endp
 
-proc GetPeb64
+;--------------------------------------------------------;
+;                       memcmp64                         ;
+;--------------------------------------------------------;
+; [in]	Ptr1 - Указатель на первый блок памяти.          ;
+; [in]	Ptr2 - Указатель на второй блок памяти.          ;
+; [in]	Size - Длина сравниваемых данных.                ;
+; [out] EAX  - TRUE или FALSE                            ;
+;--------------------------------------------------------;
 
-     mov    edx, 0x60		           ; TEB64->PEB64
-     mov    eax, dword [gs:edx]        ;
-     mov    edx, dword [gs:edx+4]      ;
+proc memcmp64 c uses esi edi, Ptr1:qword, Ptr2:qword, Size:dword
+
+     %jmp33                            ;
+     mov    rsi, [Ptr1] 	           ;
+     mov    rdi, [Ptr2] 	           ;
+     mov    ecx, [Size]                ;
+     mov    edx, ecx                   ;
+     xor    eax, eax                   ;
+     test   ecx, ecx                   ;
+     jle    .Exit                      ;
+     cld                               ;
+     shr    ecx, 3                     ;
+     repe   cmpsq                      ;
+     jne    .Exit                      ;
+     mov    ecx, edx                   ;
+     and    ecx, 7                     ;
+     repe   cmpsb                      ;
+     sete   al                         ; Если ZF = 1, то eax = 1
+.Exit:                                 ;
+     %jmp23                            ;
      ret                               ;
 
 endp
+
+;--------------------------------------------------------;
+;                        IsWoW64                         ;
+;--------------------------------------------------------;
+; [out] EAX - TRUE или FALSE                             ;
+;--------------------------------------------------------;
+
+proc IsWoW64
+
+     xor   eax, eax                    ;
+     mov   edx, cs                     ;
+     cmp   edx, 0x23                   ; WOW64_SEGMENT
+     sete  al                          ;
+     ret                               ;
+
+endp
+
+;--------------------------------------------------------;
+;                       GetTeb64                         ;
+;--------------------------------------------------------;
+; [out] EDX:EAX - 64-битный TEB.                         ;
+;--------------------------------------------------------;
+
+proc GetTeb64
+
+     mov    edx, 0x30                  ; TEB64->NtTib.Self
+     mov    eax, dword [gs:edx]        ;
+     mov    edx, dword [gs:edx+0x04]   ;
+     ret                               ;
+
+endp
+
+;--------------------------------------------------------;
+;                       GetPeb64                         ;
+;--------------------------------------------------------;
+; [out] EDX:EAX - 64-битный PEB.                         ;
+;--------------------------------------------------------;
+
+proc GetPeb64
+
+     mov    edx, 0x60                  ; TEB64->PEB64
+     mov    eax, dword [gs:edx]        ;
+     mov    edx, dword [gs:edx+0x04]   ;
+     ret                               ;
+
+endp
+
+;--------------------------------------------------------;
+;                      GetNtdll64                        ;
+;--------------------------------------------------------;
+; [out] EDX:EAX - Адрес загрузки 64-битной ntdll.dll	 ;
+;--------------------------------------------------------;
 
 proc GetNtdll64
 
@@ -261,8 +356,9 @@ proc GetNtdll64
      mov    eax, dword [gs:eax]        ;
      mov    eax, dword [eax+0x18]      ;
      mov    eax, dword [eax+0x10]      ;
-     mov    eax, dword [eax]	       ;
-     mov    edx, dword [eax+0x30]      ;
-     ret			                   ;
+     mov    edx, dword [eax]	       ;
+     mov    eax, dword [edx+0x30]      ;
+     mov    edx, dword [edx+0x34]      ;
+     ret                               ;
 
 endp
