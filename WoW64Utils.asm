@@ -72,9 +72,9 @@ IMAGE_FILE_MACHINE_AMD64 = 0x8664
 ;--------------------------------------------------------;
 ;                        x64Call                         ;
 ;--------------------------------------------------------;
-; [in]	pfnProc64 - Указатель на вызываемую функцию.	 ;
-; [in]	nArgs	  - Количество передаваемых параметров.  ;
-; [in]	...	  - Список параметров для функции.           ;
+; [in]  pfnProc64 - Указатель на вызываемую функцию.     ;
+; [in]  nArgs	  - Количество передаваемых параметров.  ;
+; [in]  ...	      - Список параметров для функции.       ;
 ; [out] EDX:EAX   - Результат вызова.                    ;
 ;--------------------------------------------------------;
 
@@ -97,8 +97,8 @@ proc x64Call c uses ebx esi edi, pfnProc64:qword, nArgs:dword, ...:dword
      mov    rdx, [rsp + 1 * 8]	       ; 2-й
      mov    r8,  [rsp + 2 * 8]	       ; 3
      mov    r9,  [rsp + 3 * 8]	       ; 4
-     movd   xmm0, ecx                  ;
-     movd   xmm1, edx                  ;
+     movd   xmm0, ecx                  ; Параметры с плавающей запятой.
+     movd   xmm1, edx                  ; 
      movd   xmm2, r8d                  ;
      movd   xmm3, r9d                  ;
      call   rax                        ; Вызываем функцию.
@@ -253,7 +253,7 @@ proc memcpy64 c uses esi edi, Dest:qword, Src:qword, Size:dword
      test   ecx, ecx                   ;
      jle    .Exit                      ;
      cld                               ;
-	 mov    edx, ecx                   ;
+     mov    edx, ecx                   ;
      shr    ecx, 3                     ;
      repe   movsq                      ;
      mov    ecx, edx                   ;
@@ -284,7 +284,7 @@ proc memcmp64 c uses esi edi, Ptr1:qword, Ptr2:qword, Size:dword
      test   ecx, ecx                   ;
      jle    .Exit                      ;
      cld                               ;
-	 mov    edx, ecx                   ;
+     mov    edx, ecx                   ;
      shr    ecx, 3                     ;
      repe   cmpsq                      ;
      jne    .Exit                      ;
@@ -317,7 +317,7 @@ proc memset64 c uses edi, Dest:qword, Val:byte, Size:dword
      jle    .Exit                      ;
      mov    rdx, 0x101010101010101     ; Расширяем байт-заполнитель до 64-х битов.
      imul   rax, rdx                   ;
-	 cld                               ; 
+     cld                               ; 
      mov    edx, ecx                   ;
      shr    ecx, 3                     ;
      rep    stosq                      ;
