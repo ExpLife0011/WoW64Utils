@@ -81,14 +81,14 @@ IMAGE_FILE_MACHINE_AMD64 = 0x8664
 proc x64Call c uses ebx esi edi, pfnProc64:qword, nArgs:dword, ...:dword
 
      %jmp33                            ; Прыгаем в 64-битный сегмент.
-     mov    ebx, esp                   ;
+     mov    ebx, esp                   ; Сохраняем указатель на стек.
      mov    rax, qword [pfnProc64]     ; RAX = Вызываемая функция.
      mov    ecx, dword [nArgs]	       ; ECX = Количество передаваемых аргументов.
      lea    esi, dword [...]	       ; ESI = Адрес начала списка аргументов.
      lea    edx, [ecx*8]               ; EDX = Размер параметров.
      add    edx, 32                    ;
      and    edx, 0xE0                  ; Выравниваем размер параметров по 32 байтной границе.
-     and    esp, 0xfffffff0            ; Win64 требует выравнивание стека на 16 байт
+     and    esp, 0xFFFFFFF0            ; Win64 требует выравнивание стека на 16 байт.
      sub    esp, edx                   ; Выделяем буфер для параметров.
      mov    edi, esp                   ; EDI = Указатель на буфер.
      cld                               ;
@@ -102,7 +102,7 @@ proc x64Call c uses ebx esi edi, pfnProc64:qword, nArgs:dword, ...:dword
      movd   xmm2, r8d                  ;
      movd   xmm3, r9d                  ;
      call   rax                        ; Вызываем функцию.
-     mov    esp, ebx                   ;
+     mov    esp, ebx                   ; Восстанавливаем стек.
      mov    rdx, rax                   ;
      shr    rdx, 32                    ;
      %jmp23                            ;
@@ -236,7 +236,7 @@ proc GetProcAddress64 c uses esi edi, ModuleHandle:qword, ProcedureName:dword
 endp
 
 ;--------------------------------------------------------;
-;                        memcpy64                        ;
+;                       memcpy64                         ;
 ;--------------------------------------------------------;
 ; [in]	Dest - Адрес буфера назначения.                  ;
 ; [in]	Src  - Адрес источника.                          ;
@@ -247,21 +247,21 @@ endp
 proc memcpy64 c uses esi edi, Dest:qword, Src:qword, Size:dword
 
      %jmp33                            ;
-     mov    rsi, [Src]		           ;
-     mov    rdi, [Dest] 	           ;
-     mov    ecx, [Size] 	           ;
-     mov    edx, ecx		           ;
-     test   ecx, ecx		           ;
-     jle    .Exit		               ;
-     cld			                   ;
-     shr    ecx, 3		               ;
-     repe   movsq		               ;
-     mov    ecx, edx		           ;
-     and    ecx, 7		               ;
-     repe   movsb		               ;
-.Exit:				                   ;
-     %jmp23			                   ;
-     ret			                   ;
+     mov    rsi, [Src]                 ;
+     mov    rdi, [Dest]                ;
+     mov    ecx, [Size]                ;
+     test   ecx, ecx                   ;
+     jle    .Exit                      ;
+     cld                               ;
+	 mov    edx, ecx                   ;
+     shr    ecx, 3                     ;
+     repe   movsq                      ;
+     mov    ecx, edx                   ;
+     and    ecx, 7                     ;
+     repe   movsb                      ;
+.Exit:                                 ;
+     %jmp23                            ;
+     ret                               ;
 
 endp
 
@@ -277,14 +277,14 @@ endp
 proc memcmp64 c uses esi edi, Ptr1:qword, Ptr2:qword, Size:dword
 
      %jmp33                            ;
-     mov    rsi, [Ptr1] 	           ;
-     mov    rdi, [Ptr2] 	           ;
+     mov    rsi, [Ptr1]                ;
+     mov    rdi, [Ptr2]                ;
      mov    ecx, [Size]                ;
-     mov    edx, ecx                   ;
      xor    eax, eax                   ;
      test   ecx, ecx                   ;
      jle    .Exit                      ;
      cld                               ;
+	 mov    edx, ecx                   ;
      shr    ecx, 3                     ;
      repe   cmpsq                      ;
      jne    .Exit                      ;
@@ -292,6 +292,38 @@ proc memcmp64 c uses esi edi, Ptr1:qword, Ptr2:qword, Size:dword
      and    ecx, 7                     ;
      repe   cmpsb                      ;
      sete   al                         ; Если ZF = 1, то eax = 1
+.Exit:                                 ;
+     %jmp23                            ;
+     ret                               ;
+
+endp
+
+;--------------------------------------------------------;
+;                       memset64                         ;
+;--------------------------------------------------------;
+; [in]	Dest - Указатель на блок памяти для заполнения.  ;
+; [in]	Val  - Заполняющий байт.                         ;
+; [in]	Size - Длина заполняемых данных.                 ;
+; [out] Ничего.                                          ;
+;--------------------------------------------------------;
+
+proc memset64 c uses edi, Dest:qword, Val:byte, Size:dword
+
+     %jmp33                            ;
+     mov    rdi, [Dest]                ;
+     movzx  eax, [Val]                 ;
+     mov    ecx, [Size]                ;
+     test   ecx, ecx                   ;
+     jle    .Exit                      ;
+     mov    rdx, 0x101010101010101     ; Расширяем байт-заполнитель до 64-х битов.
+     imul   rax, rdx                   ;
+	 cld                               ; 
+     mov    edx, ecx                   ;
+     shr    ecx, 3                     ;
+     rep    stosq                      ;
+     mov    ecx, edx		           ;
+     and    ecx, 7                     ;
+     rep    stosb                      ;
 .Exit:                                 ;
      %jmp23                            ;
      ret                               ;
@@ -341,37 +373,5 @@ proc IsWoW64
      cmp   edx, 0x23                   ; WOW64_SEGMENT
      sete  al                          ;
      ret                               ;
-
-endp
-
-;--------------------------------------------------------;
-;			            memset64			             ;
-;--------------------------------------------------------;
-; [in]	Dest - Указатель на блок памяти для заполнения.  ;
-; [in]	Val  - Заполняющий байт.			             ;
-; [in]	Size - Длина заполняемых данных.		         ;
-; [out] Ничего. 					                     ;
-;--------------------------------------------------------;
-
-proc memset64 c uses edi, Dest:qword, Val:byte, Size:dword
-
-     %jmp33                            ;
-     mov    rdi, [Dest] 	           ;
-     movzx  eax, [Val]		           ;
-     mov    ecx, [Size] 	           ;
-     test   ecx, ecx		           ;
-     jle    .Exit		               ;
-     mov    rdx, 0x101010101010101     ;
-     imul   rax, rdx		           ;
-     mov    edx, ecx		           ;
-     shr    ecx, 3		               ;
-     cld			                   ;
-     rep    stosq		               ;
-     mov    ecx, edx		           ;
-     and    ecx, 7		               ;
-     rep    stosb		               ;
-.Exit:				                   ;
-     %jmp23			                   ;
-     ret			                   ;
 
 endp
