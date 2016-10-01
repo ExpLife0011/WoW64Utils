@@ -663,16 +663,17 @@ DWORD64 __cdecl GetModuleHandle64(_In_ LPCWSTR lpModuleName);
 DWORD64 __cdecl GetProcAddress64(_In_ DWORD64 hModule, _In_ LPCSTR lpProcName);
 void    __cdecl memcpy64(_In_ DWORD64 Dest, _In_ DWORD64 Src, _In_ DWORD Size);
 BOOLEAN __cdecl memcmp64(_In_ DWORD64 Dest, _In_ DWORD64 Src, _In_ DWORD Size);
-DWORD64 __cdecl GetNtdll64();
+void    __cdecl memset64(_In_ DWORD64 Dest, _In_ char Val, _In_ DWORD Size);
 DWORD64 __cdecl GetTeb64();
 DWORD64 __cdecl GetPeb64();
 BOOLEAN __cdecl IsWoW64();
 
 //#define IsWoW64() (__readfsdword(0xC0) > 0)
-//#define GetNtdll64() GetModuleHandle64(L"ntdll.dll")
+#define GetNtdll64() GetModuleHandle64(L"ntdll.dll")
 
 #define RtlWow64CopyMemory64(Destination, Source, Length)  memcpy64((DWORD64)Destination, (DWORD64)Source, (DWORD)Length)
 #define RtlWow64EqualMemory64(Destination, Source, Length) memcmp64((DWORD64)Destination, (DWORD64)Source, (DWORD)Length)
+#define RtlWoW64ZeroMemory64(Destination, Length) memset64((DWORD64)Destination, '\0', (DWORD)Length) 
 
 /*
 */

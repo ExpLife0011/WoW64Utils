@@ -178,7 +178,6 @@ NtWow64QueryInformationProcess64(
 		return STATUS_NOT_IMPLEMENTED;
 }
 
-
 /*
    @16
 */

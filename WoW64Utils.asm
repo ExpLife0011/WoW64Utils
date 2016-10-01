@@ -1,16 +1,16 @@
 format COFF
 
 ; © Wolk-1024
-; v01.06.2016
+; v01.10.2016
 
 public x64Call           as '_x64Call'
 public GetModuleHandle64 as '_GetModuleHandle64'
 public GetProcAddress64  as '_GetProcAddress64'
 public memcpy64          as '_memcpy64'
 public memcmp64          as '_memcmp64'
+public memset64          as '_memset64'
 public GetTeb64          as '_GetTeb64'
 public GetPeb64          as '_GetPeb64'
-public GetNtdll64        as '_GetNtdll64'
 public IsWoW64           as '_IsWoW64'
 
 include '..\include\win32ax.inc'
@@ -190,7 +190,7 @@ proc GetProcAddress64 c uses esi edi, ModuleHandle:qword, ProcedureName:dword
      cld                               ;
 .NextProc:                             ;
      dec    ecx                        ;
-     jle    .Error                     ;
+     je     .Error                     ;
      mov    esi, dword [r9+rcx*4]      ; char* Name = (char*)(AddressOfNames[IndexName] + hModule);
      add    rsi, r10                   ;
      mov    edi, edx                   ; edi = ProcedureName
@@ -299,22 +299,6 @@ proc memcmp64 c uses esi edi, Ptr1:qword, Ptr2:qword, Size:dword
 endp
 
 ;--------------------------------------------------------;
-;                        IsWoW64                         ;
-;--------------------------------------------------------;
-; [out] EAX - TRUE или FALSE                             ;
-;--------------------------------------------------------;
-
-proc IsWoW64
-
-     xor   eax, eax                    ;
-     mov   edx, cs                     ;
-     cmp   edx, 0x23                   ; WOW64_SEGMENT
-     sete  al                          ;
-     ret                               ;
-
-endp
-
-;--------------------------------------------------------;
 ;                       GetTeb64                         ;
 ;--------------------------------------------------------;
 ; [out] EDX:EAX - 64-битный TEB.                         ;
@@ -345,20 +329,49 @@ proc GetPeb64
 endp
 
 ;--------------------------------------------------------;
-;                      GetNtdll64                        ;
+;                        IsWoW64                         ;
 ;--------------------------------------------------------;
-; [out] EDX:EAX - Адрес загрузки 64-битной ntdll.dll	 ;
+; [out] EAX - TRUE или FALSE                             ;
 ;--------------------------------------------------------;
 
-proc GetNtdll64
+proc IsWoW64
 
-     mov    eax, 0x60                  ;
-     mov    eax, dword [gs:eax]        ;
-     mov    eax, dword [eax+0x18]      ;
-     mov    eax, dword [eax+0x10]      ;
-     mov    edx, dword [eax]	       ;
-     mov    eax, dword [edx+0x30]      ;
-     mov    edx, dword [edx+0x34]      ;
+     xor   eax, eax                    ;
+     mov   edx, cs                     ;
+     cmp   edx, 0x23                   ; WOW64_SEGMENT
+     sete  al                          ;
      ret                               ;
+
+endp
+
+;--------------------------------------------------------;
+;			            memset64			             ;
+;--------------------------------------------------------;
+; [in]	Dest - Указатель на блок памяти для заполнения.  ;
+; [in]	Val  - Заполняющий байт.			             ;
+; [in]	Size - Длина заполняемых данных.		         ;
+; [out] Ничего. 					                     ;
+;--------------------------------------------------------;
+
+proc memset64 c uses edi, Dest:qword, Val:byte, Size:dword
+
+     %jmp33                            ;
+     mov    rdi, [Dest] 	           ;
+     movzx  eax, [Val]		           ;
+     mov    ecx, [Size] 	           ;
+     test   ecx, ecx		           ;
+     jle    .Exit		               ;
+     mov    rdx, 0x101010101010101     ;
+     imul   rax, rdx		           ;
+     mov    edx, ecx		           ;
+     shr    ecx, 3		               ;
+     cld			                   ;
+     rep    stosq		               ;
+     mov    ecx, edx		           ;
+     and    ecx, 7		               ;
+     rep    stosb		               ;
+.Exit:				                   ;
+     %jmp23			                   ;
+     ret			                   ;
 
 endp
